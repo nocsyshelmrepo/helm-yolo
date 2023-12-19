@@ -1,0 +1,115 @@
+{{- $tpsSupportsMinDomains := eq (include "tps.supportsMinDomains" .) "true" -}}
+{{- $is_gpu := and (eq (include "chk_gpu" .) "true") (.Values.requestGpu) -}}
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "yolo.fullname" . }}
+  labels:
+    {{- include "yolo.selectorLabels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+
+  selector:
+    matchLabels:
+      {{- include "yolo.selectorLabels" . | nindent 6 }}
+
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "yolo.selectorLabels" . | nindent 8 }}
+
+    spec:
+      {{- if .Values.spread.enabled }}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          {{- if $tpsSupportsMinDomains }}
+          minDomains: 1
+          {{- end }}
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              {{- include "yolo.selectorLabels" . | nindent 14 }}
+      {{- end }}
+
+      {{- if $is_gpu }}
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
+      {{- end }}
+
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: {{ .Chart.Name }}
+          image: {{ include "yolo.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          command:
+            - /bin/sh
+            - '-c'
+            - |
+              /bin/sh <<'EOF'
+            {{- if .Values.cmdstr }}
+              {{ tpl (.Values.cmdstr) . | nindent 14 }}
+            {{- else }}
+              sleep infinity
+            {{- end }}
+              EOF
+
+          ports:
+            - name: {{ .Values.service.http.name }}
+              containerPort: {{ .Values.service.http.port }}
+              protocol: {{ .Values.service.http.protocol }}
+
+          {{- if .Values.https.enabled }}
+            - name: {{ .Values.service.https.name }}
+              containerPort: {{ .Values.service.https.port }}
+              protocol: {{ .Values.service.https.protocol }}
+          {{- end }}
+
+          resources:
+            requests:
+            {{- toYaml .Values.resources.requests | nindent 14 }}
+            {{- if $is_gpu }}
+              nvidia.com/gpu: 1
+            {{- end }}
+            limits:
+            {{- toYaml .Values.resources.limits | nindent 14 }}
+            {{- if $is_gpu }}
+              nvidia.com/gpu: 1
+            {{ end }}
+
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.service.http.port }}
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.service.http.port }}
+            initialDelaySeconds: 30
+            timeoutSeconds: 10
+
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
